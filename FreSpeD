@@ -1,0 +1,101 @@
+#%% Import
+import matplotlib.pyplot as plt
+import neo %For importing my type of data
+import numpy as np
+import scipy
+import scipy.signal
+import sklearn.cluster
+
+
+#%% Read Signal
+#signal = ...
+fss = ... (sampling frequency of the signal, 50 for my work)
+
+
+#%% Run (Run method section before running this)
+Const = 0.004 %This value affects the number of changing points
+M = 2
+time_res = 25
+N = signal.size
+time = np.arange(N) / fss
+fsd = FreSpeD(Const, M, time_res)
+fsd.fit(signal, fss)
+BPs = fsd.BreakPoints
+
+
+#%% Plot
+fig, ax1 = plt.subplots()
+ax1.plot(time, signal, "k")
+ax1.tick_params(labelsize=20)
+ax1.set_xlim([0,time[-1]])
+ax1.set_xlabel('Time (s)', fontsize=20)
+ax1.set_ylabel('Amplitude', fontsize=20)
+for bp in BPs:
+    ax1.axvline(x=time[bp], color="r")
+
+
+#%% Method
+class FreSpeD():
+
+    """FreSpeD"""
+    
+    def __init__(self, Const, smoothing = 2, time_res = 256):
+        self.smoothing = smoothing
+        self.time_res = time_res
+        self.Const = Const
+        
+    def fit(self, signal, fs): #fit the model to the data
+        self.signal = signal
+        self.fs = fs
+        self.__fit_periodogram(signal)
+        self.T = self.Sxx.shape[1] - self.smoothing 
+        self.BreakPoints  = set(k*self.time_res for k in self.BinSeg(0, self.T))
+    
+    def __fit_periodogram(self,signal):       
+        M = self.smoothing
+        self.fk, self.tk, Sxx = scipy.signal.spectrogram(signal, fs=self.fs, window='hann', nperseg=self.time_res*M, noverlap=(M-1)*self.time_res, scaling='density', axis=0)      
+        self.Sxx = scipy.signal.lfilter(np.ones((M,))/M, 1, np.squeeze(Sxx))        
+    
+    def CuSum(self, s, b, e, threshold):
+        z_hat = self.Sxx
+        z_hat1 = self.Sxx[:, s:b]
+        z_hat2 = self.Sxx[:, b:e]
+        n = e-s+1
+        sigma_hat = np.sum(z_hat)/(n*np.sqrt(self.time_res))
+        Cu = np.abs(np.sqrt((e-b)/(n*(b-s+1)))*np.sum(z_hat1, axis = 1) - np.sqrt((b-s+1)/(n*(e-b)))*np.sum(z_hat2, axis=1))/sigma_hat
+        C = (Cu*(Cu>threshold)).sum(axis = 0)
+        return C    
+    
+    def values(self, s, e, B, threshold):
+        max_CB = -np.inf
+        min_CB0 = np.inf
+        C_B = []
+        for b in B:
+            C_B.append(self.CuSum(s, b, e, threshold))
+            if C_B[-1] > max_CB:
+                b0 = b
+                max_CB = C_B[-1] 
+        B0 = list(range(b0 - self.DT, b0 + self.DT))
+        min_CB0 = min([c_b for (c_b, b) in zip(C_B, B) if b in B0])
+        return [max_CB, b0, min_CB0]   
+               
+    def BinSeg(self, s, e): 
+        Theta = 0.5 #between 0.5 & 1
+        delta = 1
+        self.DT = 2
+        threshold = self.Const*delta*np.sqrt(self.T)
+        if e-s >= 2*delta + 1: 
+            B = list(range(s+delta, e-delta+1))
+            [max_CB, b0, min_CB0] = self.values(s, e, B, threshold)  
+            while (max_CB < threshold or min_CB0 <= 0):
+                if len(B) > 1:
+                    B.remove(b0)
+                    [max_CB, b0, min_CB0] = self.values(s, e, B, threshold)
+                else:
+                    a = set()
+                    return a
+            
+            return set.union({b0}, self.BinSeg(s, b0), self.BinSeg(b0+1, e)) 
+        else:
+            return set()
+          
